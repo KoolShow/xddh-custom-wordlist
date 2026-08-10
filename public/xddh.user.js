@@ -1908,7 +1908,34 @@ function installWordListPanel() {
     }
 }
 
+function installWordButtonStyle() {
+    const style = document.createElement('style');
+
+    style.textContent = `
+        .xddh-word {
+            height: auto !important;
+            min-height: 2.5rem;
+            padding: 0.5rem 0.375rem;
+            line-height: 1.2 !important;
+            white-space: normal !important;
+            word-break: break-all;
+            overflow-wrap: anywhere;
+        }
+
+        :has(> .xddh-word) {
+            align-self: stretch !important;
+        }
+
+        :has(> .xddh-word) > .xddh-word {
+            height: 100% !important;
+        }
+    `;
+
+    document.documentElement.appendChild(style);
+}
+
 installWebpackInterceptor();
 installResourceObserver();
 installWordListPanel();
+installWordButtonStyle();
 })();
