@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         行动代号自定义词库
 // @namespace    https://xddh.koolshow.top
-// @version      1.1.0
+// @version      1.2.0
 // @description  hullqin xddh替换默认词库, 支持链接与直接输入
 // @match        https://game.hullqin.cn/xddh/*
 // @run-at       document-start
@@ -11,6 +11,8 @@
 // @grant        GM_getResourceText
 // @connect      *
 // @resource     TAILWIND_CSS https://cdn.jsdelivr.net/npm/tailwindcss@2.2.19/dist/tailwind.min.css
+// @updateURL    https://xddh-custom-wordlist.koolshow.top/xddh.user.js
+// @downloadURL  https://xddh-custom-wordlist.koolshow.top/xddh.user.js
 // ==/UserScript==
 
 (() => {
