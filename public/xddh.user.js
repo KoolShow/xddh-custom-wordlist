@@ -28,6 +28,7 @@
 
     const WRAPPED_PUSH = Symbol('xddhWrappedPush');
     const PATCHED_FACTORY = Symbol('xddhPatchedFactory');
+    const PATCHED_CHUNK_LOAD = Symbol('xddhPatchedChunkLoad');
 
     const seenChunks = new WeakSet();
     const patchedFactories = new WeakSet();
@@ -60,8 +61,22 @@
 
     const FORCE_REQUIRE_TARGET = true;
 
-    const WORD_LIST_STORAGE_KEY =
-    'xddh.custom-word-list.v1';
+    const DB_NAME = 'xddh-custom-wordlist';
+    const DB_VERSION = 1;
+    const STORE_WORDLISTS = 'wordlists';
+    const STORE_META = 'meta';
+    const ACTIVE_KEY = 'activeWordlistId';
+
+    let dbPromise = null;
+    let activeWordlist = null;
+
+    let wordListReady = false;
+    let resolveWordListReady = null;
+
+    const wordListReadyPromise =
+        new Promise(resolve => {
+            resolveWordListReady = resolve;
+        });
 
     let wordListUI = null;
     let runtimeCaptureQueued = false;
@@ -74,52 +89,194 @@
             .filter(Boolean);
     }
 
-    function loadStoredWordListRecord() {
-        try {
-            const raw =
-                  W.localStorage.getItem(
-                      WORD_LIST_STORAGE_KEY
-                  );
+    function openWordListDb() {
+        if (dbPromise) {
+            return dbPromise;
+        }
 
-            if (!raw) {
-                return null;
+        dbPromise = new Promise((resolve, reject) => {
+            if (!W.indexedDB) {
+                reject(new Error('当前环境不支持 IndexedDB'));
+                return;
             }
 
-            const record = JSON.parse(raw);
+            const request =
+                W.indexedDB.open(
+                    DB_NAME,
+                    DB_VERSION
+                );
 
-            if (
-                !record ||
-                !Array.isArray(record.words)
-            ) {
-                return null;
-            }
+            request.onupgradeneeded = () => {
+                const db = request.result;
 
-            const words = record.words
-            .map(word => String(word).trim())
-            .filter(Boolean);
+                if (
+                    !db.objectStoreNames.contains(
+                        STORE_WORDLISTS
+                    )
+                ) {
+                    db.createObjectStore(
+                        STORE_WORDLISTS,
+                        { keyPath: 'id' }
+                    );
+                }
 
-            if (words.length === 0) {
-                return null;
-            }
-
-            return {
-                ...record,
-                words
+                if (
+                    !db.objectStoreNames.contains(
+                        STORE_META
+                    )
+                ) {
+                    db.createObjectStore(
+                        STORE_META,
+                        { keyPath: 'key' }
+                    );
+                }
             };
-        } catch (error) {
-            console.error(
-                '[XDDH Hook] 读取本地词库失败',
-                error
-            );
 
-            return null;
+            request.onsuccess = () =>
+                resolve(request.result);
+
+            request.onerror = () =>
+                reject(request.error);
+        });
+
+        return dbPromise;
+    }
+
+    function dbRequest(
+        storeName,
+        mode,
+        operation
+    ) {
+        return openWordListDb().then(db =>
+            new Promise((resolve, reject) => {
+                const transaction =
+                    db.transaction(
+                        storeName,
+                        mode
+                    );
+
+                const store =
+                    transaction.objectStore(
+                        storeName
+                    );
+
+                const request =
+                    operation(store);
+
+                request.onsuccess = () =>
+                    resolve(request.result);
+
+                request.onerror = () =>
+                    reject(request.error);
+            })
+        );
+    }
+
+    function dbGetAllWordlists() {
+        return dbRequest(
+            STORE_WORDLISTS,
+            'readonly',
+            store => store.getAll()
+        );
+    }
+
+    function dbPutWordlist(record) {
+        return dbRequest(
+            STORE_WORDLISTS,
+            'readwrite',
+            store => store.put(record)
+        );
+    }
+
+    function dbDeleteWordlist(id) {
+        return dbRequest(
+            STORE_WORDLISTS,
+            'readwrite',
+            store => store.delete(id)
+        );
+    }
+
+    function dbGetActiveId() {
+        return dbRequest(
+            STORE_META,
+            'readonly',
+            store => store.get(ACTIVE_KEY)
+        ).then(row => row?.value ?? null);
+    }
+
+    function dbSetActiveId(id) {
+        return dbRequest(
+            STORE_META,
+            'readwrite',
+            store => store.put({
+                key: ACTIVE_KEY,
+                value: id
+            })
+        );
+    }
+
+    function getActiveWordlist() {
+        return activeWordlist;
+    }
+
+    function deriveWordlistNameFromUrl(url) {
+        try {
+            let filename =
+                new URL(url).pathname
+                    .split('/')
+                    .pop() || '';
+
+            try {
+                filename =
+                    decodeURIComponent(filename);
+            } catch {
+                // 保留原始文件名
+            }
+
+            const base =
+                filename.replace(
+                    /\.[^.]*$/,
+                    ''
+                ) || filename;
+
+            return base || '网址词库';
+        } catch {
+            return '网址词库';
         }
     }
 
-    function saveStoredWordList(
-    words,
-     source
+    function pickUniqueName(
+        lists,
+        preferred
     ) {
+        if (
+            !lists.some(
+                list => list.name === preferred
+            )
+        ) {
+            return preferred;
+        }
+
+        let index = 2;
+
+        while (
+            lists.some(
+                list =>
+                    list.name ===
+                    `${preferred} (${index})`
+            )
+        ) {
+            index += 1;
+        }
+
+        return `${preferred} (${index})`;
+    }
+
+    async function addWordlist({
+        name,
+        words,
+        source
+    }) {
         const normalizedWords = words
         .map(word => String(word).trim())
         .filter(Boolean);
@@ -128,25 +285,98 @@
             throw new Error('词库中没有有效内容');
         }
 
+        const lists =
+            await dbGetAllWordlists();
+
         const record = {
-            version: 1,
+            id:
+                `wl-${Date.now().toString(36)}-${Math.random()
+                    .toString(36)
+                    .slice(2)}`,
+            name: pickUniqueName(
+                lists,
+                name
+            ),
             words: normalizedWords,
             source,
             updatedAt: Date.now()
         };
 
-        W.localStorage.setItem(
-            WORD_LIST_STORAGE_KEY,
-            JSON.stringify(record)
-        );
+        await dbPutWordlist(record);
+
+        activeWordlist = record;
+
+        await dbSetActiveId(record.id);
+
+        applyStoredWordListToCurrentTarget();
 
         return record;
     }
 
-    function clearStoredWordList() {
-        W.localStorage.removeItem(
-            WORD_LIST_STORAGE_KEY
-        );
+    async function selectWordlist(id) {
+        if (id) {
+            const lists =
+                await dbGetAllWordlists();
+
+            activeWordlist =
+                lists.find(
+                    list => list.id === id
+                ) ?? null;
+
+            await dbSetActiveId(id);
+        } else {
+            activeWordlist = null;
+            await dbSetActiveId(null);
+        }
+
+        applyStoredWordListToCurrentTarget();
+
+        return activeWordlist;
+    }
+
+    async function deleteWordlist(id) {
+        await dbDeleteWordlist(id);
+
+        if (activeWordlist?.id === id) {
+            activeWordlist = null;
+            await dbSetActiveId(null);
+            applyStoredWordListToCurrentTarget();
+        }
+    }
+
+    async function initWordListStorage() {
+        setTimeout(() => {
+            if (!wordListReady) {
+                wordListReady = true;
+                resolveWordListReady?.();
+            }
+        }, 8000);
+
+        try {
+            const activeId =
+                await dbGetActiveId();
+
+            if (activeId) {
+                const lists =
+                    await dbGetAllWordlists();
+
+                activeWordlist =
+                    lists.find(
+                        list => list.id === activeId
+                    ) ?? null;
+            }
+        } catch (error) {
+            console.error(
+                '[XDDH Hook] 读取 IndexedDB 词库失败',
+                error
+            );
+        }
+
+        applyStoredWordListToCurrentTarget();
+        wordListUI?.refresh?.();
+
+        wordListReady = true;
+        resolveWordListReady?.();
     }
 
     /**
@@ -414,7 +644,7 @@
         }
 
         const record =
-              loadStoredWordListRecord();
+              getActiveWordlist();
 
         /*
      * 未导入本地词库时，继续使用游戏原词库。
@@ -829,6 +1059,44 @@
         return true;
     }
 
+    function installChunkLoadGate(
+        webpackRequire
+    ) {
+        const originalChunkLoad =
+            webpackRequire.e;
+
+        if (
+            typeof originalChunkLoad !==
+                'function' ||
+            originalChunkLoad[
+                PATCHED_CHUNK_LOAD
+            ]
+        ) {
+            return;
+        }
+
+        webpackRequire.e =
+            function (...chunkIds) {
+                return wordListReadyPromise.then(
+                    () =>
+                        originalChunkLoad.apply(
+                            this,
+                            chunkIds
+                        )
+                );
+            };
+
+        Object.defineProperty(
+            webpackRequire.e,
+            PATCHED_CHUNK_LOAD,
+            { value: true }
+        );
+
+        console.info(
+            '[XDDH Hook] 已包装 chunk 加载函数，等待词库就绪'
+        );
+    }
+
     function recoverFromWebpackRuntime(
         webpackRequire
     ) {
@@ -1047,9 +1315,15 @@
                     }
                 );
 
-                recoverFromWebpackRuntime(
+                installChunkLoadGate(
                     webpackRequire
                 );
+
+                wordListReadyPromise.then(() => {
+                    recoverFromWebpackRuntime(
+                        webpackRequire
+                    );
+                });
             }
         ];
 
@@ -1234,10 +1508,16 @@
             );
 
             if (state.webpackRequire) {
+                installChunkLoadGate(
+                    state.webpackRequire
+                );
+
                 queueMicrotask(() => {
-                    recoverFromWebpackRuntime(
-                        state.webpackRequire
-                    );
+                    wordListReadyPromise.then(() => {
+                        recoverFromWebpackRuntime(
+                            state.webpackRequire
+                        );
+                    });
                 });
             }
         }
@@ -1252,10 +1532,6 @@
         }
 
         function interceptedPush(...chunks) {
-            /*
-             * 必须先 inspect/patch，
-             * 再交给 Webpack runtime。
-             */
             for (const chunk of chunks) {
                 inspectChunk(chunk);
             }
@@ -1527,6 +1803,20 @@ function installWordListPanel() {
 
                     <div class="space-y-2">
                         <label
+                            for="xddh-wordlist-select"
+                            class="block text-sm font-medium text-gray-700"
+                        >
+                            选择词库
+                        </label>
+
+                        <select
+                            id="xddh-wordlist-select"
+                            class="block w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-200"
+                        ></select>
+                    </div>
+
+                    <div class="space-y-2">
+                        <label
                             for="xddh-word-url"
                             class="block text-sm font-medium text-gray-700"
                         >
@@ -1586,7 +1876,7 @@ function installWordListPanel() {
                         type="button"
                         class="w-full rounded-lg border border-red-200 bg-red-50 px-4 py-2 text-sm font-medium text-red-700 hover:bg-red-100"
                     >
-                        删除本地词库并恢复原词库
+                        删除当前词库并恢复默认
                     </button>
 
                     <p
@@ -1657,6 +1947,11 @@ function installWordListPanel() {
                 'xddh-reset-words'
             );
 
+        const wordlistSelect =
+            shadow.getElementById(
+                'xddh-wordlist-select'
+            );
+
         const storedCount =
             shadow.getElementById(
                 'xddh-stored-count'
@@ -1700,13 +1995,49 @@ function installWordListPanel() {
                 classNames.normal;
         }
 
-        function refresh() {
-            const record =
-                loadStoredWordListRecord();
+        async function refresh() {
+            let lists = [];
+
+            try {
+                lists = await dbGetAllWordlists();
+            } catch (error) {
+                console.error(
+                    '[XDDH Hook] 读取词库列表失败',
+                    error
+                );
+            }
+
+            wordlistSelect.innerHTML = '';
+
+            const defaultOption =
+                document.createElement('option');
+
+            defaultOption.value = '';
+            defaultOption.textContent =
+                '默认词库（游戏原词库）';
+
+            wordlistSelect.appendChild(
+                defaultOption
+            );
+
+            for (const list of lists) {
+                const option =
+                    document.createElement('option');
+
+                option.value = list.id;
+                option.textContent = list.name;
+
+                wordlistSelect.appendChild(
+                    option
+                );
+            }
+
+            wordlistSelect.value =
+                activeWordlist?.id ?? '';
 
             storedCount.textContent =
                 String(
-                    record?.words.length ?? 0
+                    activeWordlist?.words.length ?? 0
                 );
 
             targetCount.textContent =
@@ -1719,7 +2050,7 @@ function installWordListPanel() {
                     )
                     : '等待模块';
 
-            if (!record) {
+            if (!activeWordlist) {
                 sourceElement.textContent =
                     '游戏原词库';
 
@@ -1727,11 +2058,11 @@ function installWordListPanel() {
             }
 
             if (
-                record.source?.type ===
+                activeWordlist.source?.type ===
                 'url'
             ) {
                 sourceElement.textContent =
-                    record.source.value;
+                    activeWordlist.source.value;
             } else {
                 sourceElement.textContent =
                     '用户粘贴文本';
@@ -1739,6 +2070,7 @@ function installWordListPanel() {
         }
 
         async function importWords(
+            name,
             words,
             source
         ) {
@@ -1748,10 +2080,12 @@ function installWordListPanel() {
                 );
             }
 
-            saveStoredWordList(
-                words,
-                source
-            );
+            const record =
+                await addWordlist({
+                    name,
+                    words,
+                    source
+                });
 
             const applied =
                 applyStoredWordListToCurrentTarget();
@@ -1760,8 +2094,8 @@ function installWordListPanel() {
 
             setStatus(
                 applied
-                    ? `已导入 ${words.length} 个词，并应用到当前词库`
-                    : `已导入 ${words.length} 个词，刷新页面后生效`,
+                    ? `已导入「${record.name}」${words.length} 个词，并应用到当前词库`
+                    : `已导入「${record.name}」${words.length} 个词，刷新页面后生效`,
                 'success'
             );
         }
@@ -1796,6 +2130,11 @@ function installWordListPanel() {
                         );
 
                     await importWords(
+                        `粘贴词库 ${new Date()
+                            .toLocaleTimeString([], {
+                                hour: '2-digit',
+                                minute: '2-digit'
+                            })}`,
                         words,
                         {
                             type: 'text'
@@ -1849,6 +2188,9 @@ function installWordListPanel() {
                         );
 
                     await importWords(
+                        deriveWordlistNameFromUrl(
+                            parsedUrl.href
+                        ),
                         words,
                         {
                             type: 'url',
@@ -1868,22 +2210,53 @@ function installWordListPanel() {
             }
         );
 
+        wordlistSelect.addEventListener(
+            'change',
+            async () => {
+                try {
+                    await selectWordlist(
+                        wordlistSelect.value
+                    );
+
+                    refresh();
+                } catch (error) {
+                    setStatus(
+                        error.message,
+                        'error'
+                    );
+                }
+            }
+        );
+
         resetButton.addEventListener(
             'click',
-            () => {
-                clearStoredWordList();
+            async () => {
+                if (!activeWordlist) {
+                    setStatus(
+                        '当前已经是默认词库',
+                        'normal'
+                    );
 
-                const applied =
-                    applyStoredWordListToCurrentTarget();
+                    return;
+                }
 
-                refresh();
+                try {
+                    await deleteWordlist(
+                        activeWordlist.id
+                    );
 
-                setStatus(
-                    applied
-                        ? '已恢复游戏原词库'
-                        : '本地词库已删除',
-                    'success'
-                );
+                    refresh();
+
+                    setStatus(
+                        '已删除当前词库，恢复默认词库',
+                        'success'
+                    );
+                } catch (error) {
+                    setStatus(
+                        error.message,
+                        'error'
+                    );
+                }
             }
         );
 
@@ -2014,4 +2387,5 @@ installWebpackInterceptor();
 installResourceObserver();
 installWordListPanel();
 installWordButtonStyle();
+initWordListStorage();
 })();
