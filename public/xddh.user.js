@@ -1926,12 +1926,80 @@ function installWordButtonStyle() {
             align-self: stretch !important;
         }
 
-        :has(> .xddh-word) > .xddh-word {
-            height: 100% !important;
+        .xddh-word-img {
+            display: block;
+            width: 100%;
+            height: auto;
+            object-fit: contain;
         }
     `;
 
     document.documentElement.appendChild(style);
+
+    function processWordElement(el) {
+        if (el.dataset.xddhImg === '1') {
+            return;
+        }
+
+        const raw = el.textContent;
+
+        if (raw.indexOf('\\') === -1 &&
+            raw.indexOf('[') === -1) {
+            return;
+        }
+
+        el.dataset.xddhImg = '1';
+
+        el.innerHTML = raw.replace(
+            /\\(.)|\[([^\[\]]*)\]/g,
+            (m, esc, url) => {
+                if (esc !== undefined) {
+                    return esc
+                        .replace(/</g, '&lt;')
+                        .replace(/>/g, '&gt;')
+                        .replace(/"/g, '&quot;');
+                }
+
+                return (
+                    '<img class="xddh-word-img" src="' +
+                    url
+                        .replace(/</g, '&lt;')
+                        .replace(/>/g, '&gt;')
+                        .replace(/"/g, '&quot;') +
+                    '">'
+                );
+            }
+        );
+    }
+
+    function processAllWordElements() {
+        const words =
+            document.querySelectorAll(
+                '.xddh-word'
+            );
+
+        for (const w of words) {
+            processWordElement(w);
+        }
+    }
+
+    const observer = new MutationObserver(
+        () => {
+            requestAnimationFrame(
+                processAllWordElements
+            );
+        }
+    );
+
+    observer.observe(
+        document.documentElement,
+        {
+            childList: true,
+            subtree: true
+        }
+    );
+
+    processAllWordElements();
 }
 
 installWebpackInterceptor();
