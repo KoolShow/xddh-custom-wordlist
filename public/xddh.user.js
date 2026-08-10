@@ -1920,10 +1920,18 @@ function installWordButtonStyle() {
             white-space: normal !important;
             word-break: break-all;
             overflow-wrap: anywhere;
+            display: flex !important;
+            flex-wrap: wrap;
+            align-items: center;
+            justify-content: center;
         }
 
         :has(> .xddh-word) {
             align-self: stretch !important;
+        }
+
+        :has(> .xddh-word) > .xddh-word {
+            height: 100% !important;
         }
 
         .xddh-word-img {
