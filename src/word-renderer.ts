@@ -1,9 +1,9 @@
 function appendEscapedWordContent(target: HTMLElement, raw: string): void {
-  const pattern = /\\(.)|\[([^\[\]]*)\]/g;
+  const pattern = /\\(.)|\[([^[]\]]*)\]/g;
   let lastIndex = 0;
-  let match: RegExpExecArray | null;
+  let match = pattern.exec(raw);
 
-  while ((match = pattern.exec(raw))) {
+  while (match) {
     if (match.index > lastIndex) {
       target.append(document.createTextNode(raw.slice(lastIndex, match.index)));
     }
@@ -21,6 +21,7 @@ function appendEscapedWordContent(target: HTMLElement, raw: string): void {
     }
 
     lastIndex = pattern.lastIndex;
+    match = pattern.exec(raw);
   }
 
   if (lastIndex < raw.length) {

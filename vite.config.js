@@ -1,8 +1,9 @@
-import { readdirSync, writeFileSync } from 'node:fs'
+import { readFileSync, readdirSync, writeFileSync } from 'node:fs'
 import { defineConfig } from 'vite'
 import monkey from 'vite-plugin-monkey'
 
 const dir = 'public/bank'
+const packageJson = JSON.parse(readFileSync(new URL('./package.json', import.meta.url), 'utf8'))
 
 const list = readdirSync(dir, { withFileTypes: true })
   .filter(item => item.name !== 'list.html')
@@ -35,7 +36,7 @@ export default defineConfig({
       userscript: {
         name: '行动代号自定义词库',
         namespace: 'https://xddh.koolshow.top',
-        version: '1.2.0',
+        version: packageJson.version,
         description: 'hullqin xddh替换默认词库, 支持链接与直接输入',
         match: ['https://game.hullqin.cn/xddh/*'],
         'run-at': 'document-start',

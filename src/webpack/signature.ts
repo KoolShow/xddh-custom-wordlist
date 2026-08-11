@@ -3,7 +3,7 @@ import { pageWindow } from '../window-env';
 
 const nativeFunctionToString = pageWindow.Function.prototype.toString;
 
-function getFunctionSource(fn: Function): string {
+function getFunctionSource(fn: (...args: never[]) => unknown): string {
   try {
     return Reflect.apply(nativeFunctionToString, fn, []);
   } catch {
@@ -11,7 +11,7 @@ function getFunctionSource(fn: Function): string {
   }
 }
 
-function compactSource(fn: Function): string {
+function compactSource(fn: (...args: never[]) => unknown): string {
   return getFunctionSource(fn)
     .replace(/\/\*[\s\S]*?\*\//g, '')
     .replace(/\/\/[^\r\n]*/g, '')

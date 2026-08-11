@@ -15,5 +15,3 @@ declare function GM_xmlhttpRequest(options: {
   onerror(): void;
   ontimeout(): void;
 }): void;
-
-declare function GM_getResourceText(name: string): string;

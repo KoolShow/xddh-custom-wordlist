@@ -1,14 +1,16 @@
 {
   "name": "xddh-custom-wordlist",
   "private": true,
-  "version": "1.0.0",
+  "version": "2.0.0",
   "type": "module",
   "scripts": {
     "dev": "vite",
     "build": "tsc && vite build",
+    "lint": "biome lint .",
     "preview": "vite preview"
   },
   "devDependencies": {
+    "@biomejs/biome": "^2.2.4",
     "typescript": "^6.0.3",
     "vite": "^8.1.0",
     "vite-plugin-monkey": "^8.1.0",

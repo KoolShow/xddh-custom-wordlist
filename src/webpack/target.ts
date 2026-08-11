@@ -55,10 +55,11 @@ export function createPatchedFactory(
             };
 
             console.log('[XDDH Hook] 已拦截 C 导出', { moduleId, originalGetter });
-            return Reflect.apply(originalDefineExports, target, [exportObject, patchedDefinitions]);
+            Reflect.apply(originalDefineExports, target, [exportObject, patchedDefinitions]);
+            return;
           }
 
-          return Reflect.apply(originalDefineExports, target, [exportObject, definitions]);
+          Reflect.apply(originalDefineExports, target, [exportObject, definitions]);
         };
       }
     });
