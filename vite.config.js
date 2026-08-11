@@ -1,5 +1,6 @@
 import { readdirSync, writeFileSync } from 'node:fs'
 import { defineConfig } from 'vite'
+import monkey from 'vite-plugin-monkey'
 
 const dir = 'public/bank'
 
@@ -28,6 +29,30 @@ writeFileSync(
 
 
 export default defineConfig({
+  plugins: [
+    monkey({
+      entry: 'src/main.ts',
+      userscript: {
+        name: '行动代号自定义词库',
+        namespace: 'https://xddh.koolshow.top',
+        version: '1.2.0',
+        description: 'hullqin xddh替换默认词库, 支持链接与直接输入',
+        match: ['https://game.hullqin.cn/xddh/*'],
+        'run-at': 'document-start',
+        sandbox: 'raw',
+        grant: [
+          'unsafeWindow',
+          'GM_xmlhttpRequest'
+        ],
+        connect: ['*'],
+        updateURL: 'https://xddh-custom-wordlist.koolshow.top/xddh.user.js',
+        downloadURL: 'https://xddh-custom-wordlist.koolshow.top/xddh.user.js'
+      },
+      build: {
+        fileName: 'xddh.user.js'
+      }
+    })
+  ],
   build: {
     outDir: 'dist'
   }
