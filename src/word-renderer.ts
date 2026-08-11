@@ -1,5 +1,5 @@
 function appendEscapedWordContent(target: HTMLElement, raw: string): void {
-  const pattern = /\\(.)|\[([^[]\]]*)\]/g;
+  const pattern = /\\(.)|\[([^[\]]*)\]/g;
   let lastIndex = 0;
   let match = pattern.exec(raw);
 
@@ -30,19 +30,52 @@ function appendEscapedWordContent(target: HTMLElement, raw: string): void {
 }
 
 function processWordElement(element: Element): void {
-  if (!(element instanceof HTMLElement) || element.dataset.xddhImg === '1') {
+  if (!(element instanceof HTMLElement)) {
     return;
   }
 
   const raw = element.textContent ?? '';
+
+  if (element.dataset.xddhImgRaw === raw) {
+    return;
+  }
 
   if (!raw.includes('\\') && !raw.includes('[')) {
     return;
   }
 
   element.dataset.xddhImg = '1';
+  element.dataset.xddhImgRaw = raw;
   element.textContent = '';
   appendEscapedWordContent(element, raw);
+}
+
+function setWordElementRaw(element: HTMLElement, raw: string): void {
+  delete element.dataset.xddhImg;
+  delete element.dataset.xddhImgRaw;
+  element.textContent = raw;
+  processWordElement(element);
+}
+
+function buildWordIndex(words: readonly unknown[]): Map<string, number[]> {
+  const indexes = new Map<string, number[]>();
+
+  words.forEach((word, index) => {
+    if (typeof word !== 'string') {
+      return;
+    }
+
+    const existing = indexes.get(word);
+
+    if (existing) {
+      existing.push(index);
+      return;
+    }
+
+    indexes.set(word, [index]);
+  });
+
+  return indexes;
 }
 
 function processNode(node: Node): void {
@@ -56,6 +89,34 @@ function processNode(node: Node): void {
 
   for (const word of node.querySelectorAll('.xddh-word')) {
     processWordElement(word);
+  }
+}
+
+export function reloadWordImages(): void {
+  processNode(document.documentElement);
+}
+
+export function replaceVisibleWords(
+  previousWords: readonly unknown[],
+  nextWords: readonly unknown[]
+): void {
+  const previousIndexes = buildWordIndex(previousWords);
+
+  for (const word of document.querySelectorAll('.xddh-word')) {
+    if (!(word instanceof HTMLElement)) {
+      continue;
+    }
+
+    const raw = word.dataset.xddhImgRaw ?? word.textContent ?? '';
+    const indexes = previousIndexes.get(raw);
+    const index = indexes?.shift();
+    const nextWord = index === undefined ? undefined : nextWords[index];
+
+    if (typeof nextWord !== 'string') {
+      continue;
+    }
+
+    setWordElementRaw(word, nextWord);
   }
 }
 
@@ -96,6 +157,10 @@ export function installWordButtonStyle(): void {
   const pendingNodes = new Set<Node>();
   let scheduled = false;
 
+  const queueNode = (node: Node) => {
+    pendingNodes.add(node instanceof Element ? node : (node.parentElement ?? node));
+  };
+
   const flush = () => {
     scheduled = false;
     const nodes = Array.from(pendingNodes);
@@ -115,21 +180,23 @@ export function installWordButtonStyle(): void {
     requestAnimationFrame(flush);
   };
 
-  const observer = new MutationObserver(records => {
-    for (const record of records) {
-      for (const node of record.addedNodes) {
-        pendingNodes.add(node);
-      }
-    }
+	  const observer = new MutationObserver(records => {
+	    for (const record of records) {
+	      queueNode(record.target);
+
+	      for (const node of record.addedNodes) {
+	        queueNode(node);
+	      }
+	    }
 
     schedule();
   });
 
   observer.observe(document.documentElement, {
     childList: true,
+    characterData: true,
     subtree: true
   });
 
-  pendingNodes.add(document.documentElement);
-  schedule();
+  reloadWordImages();
 }

@@ -6,6 +6,7 @@ import type {
   WebpackModule,
   WebpackRequire
 } from '../types';
+import { reloadWordImages, replaceVisibleWords } from '../word-renderer';
 import { buildReplacementN, copyArray } from '../wordlist';
 import { EXPORT_NAME, PATCHED_FACTORY, patchedFactories, type PatchedFactory, state } from './state';
 
@@ -185,7 +186,10 @@ export function applyStoredWordListToCurrentTarget(): boolean {
   }
 
   const nextWords = buildReplacementN(target.originalN, getActiveWordlist());
+  const previousWords = target.replacementN.slice();
   copyArray(target.replacementN, nextWords);
+  replaceVisibleWords(previousWords, nextWords);
+  queueMicrotask(reloadWordImages);
   console.info('[XDDH Hook] 已应用本地词库', {
     originalLength: target.originalN.length,
     replacementLength: target.replacementN.length
